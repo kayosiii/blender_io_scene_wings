@@ -1,0 +1,20 @@
+This is the first revision of a Wings3d Importer for blender 2.5
+Currently the following features are supported/need testing
+
+*- Basic Geometry
+*- Ngons (currently these are broken up to tri's on import - either wait for bmesh or figure out fgons)
+*- vertex colors
+*- uv coords
+*- hard edges
+*- virtual mirror (currently assumes mirror is on x-axis will need to do something clever to get more)
+*- opengl material properties
+*- multiple materials per face
+
+The following are not implemented yet
+
+*- external textures - this is the next thing on the list
+*- internal textures - doesn't seem possible with the current python api
+*- cameras
+*- lights
+*- folders
+*- export
