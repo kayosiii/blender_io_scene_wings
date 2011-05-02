@@ -30,36 +30,36 @@ class ImportWings(bpy.types.Operator, ImportHelper):
         from . import import_wings
         return import_wings.load(self, context, **self.as_keywords(ignore=("filter_glob",)))
 
-class ExportBVH(bpy.types.Operator, ExportHelper):
-    '''Save a BVH motion capture file from an armature'''
-    bl_idname = "export_wings.wings"
-    bl_label = "Export Wings"
+#class ExportBVH(bpy.types.Operator, ExportHelper):
+#   '''Save a BVH motion capture file from an armature'''
+#    bl_idname = "export_wings.wings"
+#    bl_label = "Export Wings"
 
-    filename_ext = ".wings"
-    filter_glob = StringProperty(default="*.wings", options={'HIDDEN'})
+#    filename_ext = ".wings"
+#    filter_glob = StringProperty(default="*.wings", options={'HIDDEN'})
     
-    def execute(self, context):
-        from . import export_wings
-        return export_wings.save(self, context, **self.as_keywords(ignore=("check_existing", "filter_glob")))
+#    def execute(self, context):
+#        from . import export_wings
+#        return export_wings.save(self, context, **self.as_keywords(ignore=("check_existing", "filter_glob")))
 
 
 def menu_func_import(self, context):
     self.layout.operator(ImportWings.bl_idname, text="Wings3d (.wings)")
 
 
-def menu_func_export(self, context):
-    self.layout.operator(ExportWings.bl_idname, text="Wings3d (.wings)")
+#def menu_func_export(self, context):
+#    self.layout.operator(ExportWings.bl_idname, text="Wings3d (.wings)")
   
 
 def register():
   bpy.utils.register_module(__name__);
   bpy.types.INFO_MT_file_import.append(menu_func_import);
-  bpy.types.INFO_MT_file_export.append(menu_func_export);
+  #bpy.types.INFO_MT_file_export.append(menu_func_export);
 
 def unregister():
   bpy.utils.unregister_module(__name__);
   bpy.types.INFO_MT_file_import.remove(menu_func_import);
-  bpy.types.INFO_MT_file_export.remove(menu_func_export);
+  #bpy.types.INFO_MT_file_export.remove(menu_func_export);
 
 if __name__ == "__main__":
   register()
