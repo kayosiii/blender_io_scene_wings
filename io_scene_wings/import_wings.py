@@ -793,5 +793,5 @@ def load(operator, context, filepath=""):
   print ("matmaps: ",matmaps)
   props = read_array_as_dict(data,read_prop)
   print ("Props: ",props)
-  add_textures(props[b'images'],matmaps)
+  if b'images' in props: add_textures(props[b'images'],matmaps)
   return {'FINISHED'}
