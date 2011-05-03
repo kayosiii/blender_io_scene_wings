@@ -454,6 +454,7 @@ def faces_from_edge_table(edge_table,verts,props,face_props,use_cols=0,use_uvs=0
       if current == face_table[i]: break
       
     fvs.reverse()
+    fvs.insert(0,fvs.pop())
     fcs.reverse()
     fuvs.reverse()
     if len(fvs) > 4: #ngon
