@@ -1,6 +1,7 @@
 import bpy
 import struct,time,sys,os,zlib,io,mathutils
 from mathutils.geometry import tesselate_polygon
+from io_utils import load_image
 
 def BPyMesh_ngon(from_data, indices, PREF_FIX_LOOPS=True):
     '''
@@ -230,7 +231,10 @@ def skip_tuple(data,strip=1):
   return
 
 def skip_array(data,strip=1):
-  if strip > 0: data.read(strip)
+  if strip > 0:
+    token = data.read(1)
+    if token == token_array_end:
+      return
   size, = struct.unpack(">L",data.read(4))
   print("skipping: array size, ",size)
   for i in range(size):
@@ -338,6 +342,10 @@ def read_double_from_string(data):
 def read_attribute(data):
   read_tuple_header(data)
   attrib_type = read_token(data)
+  print("attrib type: ",attrib_type)
+  if attrib_type == b'pst':
+    t = read_token(data)
+    return (attrib_type,t)
   token = data.read(1)
   if token == token_double_str:
     t = read_double_from_string(data)
@@ -355,10 +363,10 @@ def read_attribute(data):
     else:
       t = (val[0],val[1],val[2],val[3])
   else:
-    t = read_token(data,strip=0)
+    t = read_token(data)
   return (attrib_type,t)
     
-def read_array_keys(data,fn=read_key,strip=1):
+def read_array_as_dict(data,fn=read_key,strip=1):
   out = {}
   if strip > 0:
     token = data.read(1)
@@ -510,8 +518,9 @@ def get_face_material(facemat):
 
 def add_material_indices(me,face_props):
   mats = {}
-  for i in range (len(face_props)):
-    blender_face = me.faces[i]
+  bfaces = me.faces
+  for i in range (len(bfaces)):
+    blender_face = bfaces[i]
     face_mat = get_face_material(face_props[i])
     if face_mat in mats:
       index = mats[face_mat]
@@ -533,13 +542,13 @@ def read_shape(data):
   skip_token(data) #winged
   edge_table = read_array(data,read_edge_set)
   print("edge_table: ",edge_table)
-  face_props = read_array(data,read_array_keys)
+  face_props = read_array(data,read_array_as_dict)
   print("face_mats: ",face_props)
   verts = read_array(data,read_vertex_array)
   print("verts: ",verts)
   hard_edges = read_array(data)
   print("hard_edges: ",hard_edges)
-  props = read_array_keys(data)
+  props = read_array_as_dict(data)
   print("props: ",props)
   faces,face_cols,face_uvs = faces_from_edge_table(edge_table,verts,props,face_props)
 
@@ -567,7 +576,7 @@ def read_shape(data):
     mirror = mods.new("mirror",'MIRROR')
 
 def read_edge_set(data):
-  return read_array_keys(data,read_edge)
+  return read_array_as_dict(data,read_edge)
   
 def read_edge(data):
   read_tuple_header(data)
@@ -614,6 +623,7 @@ def read_vertex(data):
 def read_prop(data):
   read_tuple_header(data)
   prop_type = read_token(data)
+  print ("prop type: ",prop_type)
   if prop_type == b'scene_prefs':
     out = read_array(data)
   elif prop_type == b'plugin_states':
@@ -625,6 +635,8 @@ def read_prop(data):
     out = read_array(data,read_view)
   elif prop_type == b'images':
     out = read_array(data,read_image)
+  #elif prop_type == b'lights':
+    #out = read_array(data,read_light)
   else :
     skip_token(data)
     out = []
@@ -634,13 +646,51 @@ def read_view(data):
   return []
 
 def read_image(data):
-  return read_attribute_list(data)
+  read_tuple_header(data)
+  img_index = read_token(data)
+  out = read_array_as_dict(data)
+  return (img_index,out)
+
+def read_light(data):
+  read_tuple_header(data)
+  light_name = read_token(data)
+  print ("light name::: ",light_name)
+  out = read_array_as_dict(data,read_light_section)
+  l_props = out[b'opengl']
+  l_type = l_props[b'type']
+  if l_type == b'infinite':
+    light = bpy.data.lamps.new(light_name,'SUN')
+    set_light_common_props(light,l_props)
+  elif l_type == b'point':
+    light = bpy.data.lamps.new(light_name,'POINT')
+    set_light_common_props(light,l_props)
+  elif l_type == b'spot':
+    light = bpy.data.lamps.new(light_name,'SPOT')
+    set_light_common_props(light,l_props)
+  elif l_type == b'area':
+    light = bpy.data.lamps.new(light_name,'AREA')
+    set_light_common_props(light,l_props)
+  return (light_name,out)
+  
+def read_light_section(data):
+  read_tuple_header(data)
+  attrib_name = read_token(data)
+  print ("lightattrib name: ",attrib_name)
+  if attrib_name == b'opengl':
+    out = read_array_as_dict(data,read_attribute)
+  else: out = read_token(data)
+  return (attrib_name,out)
+
+def set_light_common_props(light,props):
+  ob = bpy.data.objects(light.name,light)
+  bpy.context.scene.objects.link(ob)
+  print ("light props: ",props)
 
 def read_material_part(data):
   read_tuple_header(data)
   attrib_type = read_token(data)
   if attrib_type == b'opengl':
-    t = read_array_keys(data)
+    t = read_array_as_dict(data)
   else:
     t = read_token(data)
   return (attrib_type,t)
@@ -650,10 +700,12 @@ def read_material(data):
   mat_name, = read_token(data),
   print ("mat name: ",mat_name)
   name_str = str(mat_name,encoding="utf8")
-  mats = read_array_keys(data,read_material_part)
+  mats = read_array_as_dict(data,read_material_part)
   print ("mats: ", mats)
   material = bpy.data.materials.get(name_str)
-  if material == None: mat = bpy.data.materials.new(name_str)
+  if material == None:
+    material = bpy.data.materials.new(name_str)
+  
   m_attribs = mats[b'opengl']
   if b'diffuse' in m_attribs :
     (r,g,b,a) = m_attribs[b'diffuse']
@@ -670,7 +722,49 @@ def read_material(data):
   if b'shininess' in m_attribs :
     s = m_attribs[b'shininess']
     material.specular_hardness = int(s*511)
-  
+  return (mat_name,mats[b'maps'])
+
+def add_textures(images,mappings):
+  for (index,image) in images:
+
+    if b'filename' in image:
+      texture = bpy.data.textures.new(name=image[b'name'], type='IMAGE')
+      filenpath = image[b'filename']
+      (dirname,filename) = os.path.split(filenpath)
+      print ("filename: ",filename," dirname: ",dirname)
+      texture.image = load_image(filename,dirname)
+      has_data = texture.image.has_data
+      mapkeys = mappings.keys()
+      for mapkey in mapkeys:
+        print ("mat name: ",mapkey)
+        mat = bpy.data.materials.get(str(mapkey,encoding="utf8"))
+        if mat == None: continue
+        mapping = mappings[mapkey]
+        for i in range(len(mapping)):
+          (channel,tex_index)=mapping[i]
+          if tex_index == index:
+            #print ("channel:",channel)
+            if channel == b'diffuse':
+              if has_data and image.depth == 32:
+                # Image has alpha
+                mtex = mat.texture_slots.add()
+                mtex.texture = texture
+                mtex.texture_coords = 'UV'
+                mtex.use_map_color_diffuse = True
+                mtex.use_map_alpha = True
+
+                texture.use_mipmap = True
+                texture.use_interpolation = True
+                texture.use_alpha = True
+                blender_material.use_transparency = True
+                blender_material.alpha = 0.0
+              else:
+                #print("adding non alpha texture")
+                mtex = mat.texture_slots.add()
+                mtex.texture = texture
+                mtex.texture_coords = 'UV'
+                mtex.use_map_color_diffuse = True
+
 def load_wings_file(filepath):
   file = open(filepath,"rb")
   header = file.read(15)
@@ -694,6 +788,9 @@ def load(operator, context, filepath=""):
   version = read_wings_header(data)
   print ("version",version)
   foreach_in_array(data,read_shape)
-  foreach_in_array(data,read_material)
-  #read_props(data)
+  matmaps = read_array_as_dict(data,read_material)
+  print ("matmaps: ",matmaps)
+  props = read_array_as_dict(data,read_prop)
+  print ("Props: ",props)
+  add_textures(props[b'images'],matmaps)
   return {'FINISHED'}
