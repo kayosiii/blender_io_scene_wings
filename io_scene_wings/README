@@ -8,16 +8,16 @@ The following works
 *- Basic Geometry
 *- Ngons *
 *- vertex colors
-*- uv coords **
+*- uv coords
 *- hard edges
-*- virtual mirror ***
+*- virtual mirror **
 *- opengl material properties
 *- multiple materials per face
 *- external textures 
 
 The following are not implemented yet
 
-*- internal textures - doesn't seem possible with the current python api- I could be dodgy and create an image texture
+*- internal textures ***
 *- cameras
 *- lights
 *- folders/hidden/editable/etc
@@ -26,6 +26,5 @@ The following are not implemented yet
 
 currently the following are known issues: -
 * ngons are converted to tris - long term it would be good to convert these to fgons (or wait for bmesh)
-** uv coords are currently rotated 90 degrees on each individual face
-*** virtual mirror currently only works on x axis - will need to calculate normal on the mirror face
-
+** virtual mirror currently only works on x axis - will need to calculate normal on the mirror face
+*** doesn't seem possible with the current python api - not without workarounds anyways
