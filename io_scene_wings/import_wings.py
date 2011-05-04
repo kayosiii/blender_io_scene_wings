@@ -1,7 +1,7 @@
 import bpy
 import struct,time,sys,os,zlib,io,mathutils
 from mathutils.geometry import tesselate_polygon
-from io_utils import load_image
+from io_utils import load_image, unpack_list, unpack_face_list
 
 def BPyMesh_ngon(from_data, indices, PREF_FIX_LOOPS=True):
     '''
@@ -236,7 +236,7 @@ def skip_array(data,strip=1):
     if token == token_array_end:
       return
   size, = struct.unpack(">L",data.read(4))
-  print("skipping: array size, ",size)
+  #print("skipping: array size, ",size)
   for i in range(size):
     skip_token(data)
   data.read(1)
@@ -244,7 +244,7 @@ def skip_array(data,strip=1):
 
 def read_token(data):
   token = data.read(1)
-  print("token",token)
+  #print("token",token)
   if token == token_byte:
     out, = struct.unpack(">B",data.read(1))
     return out
@@ -311,7 +311,7 @@ def read_array(data,fn=read_token,strip=1):
       return out
 
   size, = struct.unpack(">L",data.read(4))
-  print("array size ",size)
+  #print("array size ",size)
   for i in range(size):
     out.append(fn(data))
   data.read(1)
@@ -370,11 +370,11 @@ def read_array_as_dict(data,fn=read_key,strip=1):
   out = {}
   if strip > 0:
     token = data.read(1)
-    print ("token: ",token)
+    #print ("token: ",token)
     if token == token_array_end:
       return out
   size, = struct.unpack(">L",data.read(4))
-  print("keys: ",size)
+  #print("keys: ",size)
   for i in range(size):
     k,d = fn(data)
     out[k] = d
@@ -416,11 +416,12 @@ def build_vert_table(edge_table):
     vert_table[ve]=i
   return vert_table
 
-def faces_from_edge_table(edge_table,verts,props,face_props,use_cols=0,use_uvs=0):
+def faces_from_edge_table(edge_table,verts,props,face_props,edges,use_cols=0,use_uvs=0):
   face_table = build_face_table(edge_table)
   faces = []
   face_cols = []
   face_uvs = []
+  hide_edges = []
   mirror_face = -1
   if b'mirror_face' in props : mirror_face = props[b'mirror_face']
   
@@ -457,37 +458,63 @@ def faces_from_edge_table(edge_table,verts,props,face_props,use_cols=0,use_uvs=0
     fvs.insert(0,fvs.pop())
     fcs.reverse()
     fuvs.reverse()
+    
     if len(fvs) > 4: #ngon
-      face_prop = face_props[i]
-      ngon_face_indicies = BPyMesh_ngon(verts,fvs)
-      for ngon in ngon_face_indicies:
-        faces.append((fvs[ngon[0]],fvs[ngon[1]],fvs[ngon[2]]))
+      ngons = BPyMesh_ngon(verts,fvs)
+      face_prop = face_props.pop(i)
+      new_edges = []
+      for ngon in ngons:
+        (v0,v1,v2) = tuple(ngon)
+        add_edge_if_new(fvs,v0,v1,edges,new_edges,hide_edges)
+        add_edge_if_new(fvs,v1,v2,edges,new_edges,hide_edges)
+        add_edge_if_new(fvs,v2,v0,edges,new_edges,hide_edges)
+        faces.append([fvs[v0],fvs[v1],fvs[v2]])
+        if len(fcs)>0: face_cols.append([fcs[v0],fcs[v1],fcs[v2]])
+        if len(fuvs)>0: face_uvs.append([fuvs[v0],fuvs[v1],fuvs[v2]])
         face_props.insert(i,face_prop)
-        if(len(fcs)>0):
-          face_cols.append((fcs[ngon[0]],fcs[ngon[1]],fcs[ngon[2]]))
-        if(len(fuvs)>0):
-          face_uvs.append((fuvs[ngon[0]],fuvs[ngon[1]],fuvs[ngon[2]]))
     else:
       faces.append(fvs)
       face_cols.append(fcs)
       face_uvs.append(fuvs)
-  return faces,face_cols,face_uvs
+  return faces,face_cols,face_uvs,hide_edges
 
-def find_edge(edge,edges):
-  a = edge[0]
-  b = edge[1]
-  for i in range(len(edges)):
-    e = edges[i]
-    if a == e.vertices[0] and b == e.vertices[1]:
-      return e
-    if a == e.vertices[1] and b == e.vertices[0]:
-      return e
+def sort_edge(v0,v1):
+  if v0 >v1: return (v1,v0)
+  return (v0,v1)
+
+def add_edge_if_new(face,v0,v1,edges,new_edges,hide_edges):
+  print ("new edges: ", new_edges)
+  (v0,v1) = sort_edge(v0,v1)
+  f0 = face[v0]
+  f1 = face[v1]
+  for (a,b) in new_edges:
+    print("f1 ",f0," a ",a," f2 ",f1," b ",b)
+    if f0 == a and f1 == b: return
+  if v0 + 1 == v1: return
+  if v1 == len(face)-1 and v0 == 0: return
+  new_edges.append((f0,f1))
+  hide_edges.append(len(edges))
+  edges.append((f0,f1))
+
+#def find_edge(edge,edges):
+  #a = edge[0]
+  #b = edge[1]
+  #for i in range(len(edges)):
+    #e = edges[i]
+    #if a == e.vertices[0] and b == e.vertices[1]:
+      #return e
+    #if a == e.vertices[1] and b == e.vertices[0]:
+      #return e
       
-def build_hard_edges(ob,hard_edges,edge_table):
-  for i in range(len(hard_edges)):
-    e = edge_table[hard_edges[i]][b'edge']
-    edge = find_edge(e,ob.data.edges)
+def build_hard_edges(me,hard_edges):
+  for hard_edge in hard_edges:
+    edge = me.edges[hard_edge]
     edge.crease = 1.0
+
+def hide_fgon_edges(me,hide_edges):
+  for hidden_edge in hide_edges:
+    edge = me.edges[hidden_edge]
+    edge.is_fgon = True
     
 def build_face_colors(me,face_cols):
   blender_me_vcols = me.vertex_colors.new()
@@ -534,6 +561,13 @@ def add_material_indices(me,face_props):
       mats[face_mat]=index
     blender_face.material_index = index
 
+def get_edges(edge_table):
+  edges = []
+  for e in edge_table:
+    edge = e[b'edge']
+    edges.append((edge[0],edge[1]))
+  return edges
+
 def read_shape(data):
   read_tuple_header(data)
   skip_token(data) #object
@@ -543,6 +577,8 @@ def read_shape(data):
   skip_token(data) #winged
   edge_table = read_array(data,read_edge_set)
   print("edge_table: ",edge_table)
+  edges = get_edges(edge_table)
+ 
   face_props = read_array(data,read_array_as_dict)
   print("face_mats: ",face_props)
   verts = read_array(data,read_vertex_array)
@@ -551,19 +587,37 @@ def read_shape(data):
   print("hard_edges: ",hard_edges)
   props = read_array_as_dict(data)
   print("props: ",props)
-  faces,face_cols,face_uvs = faces_from_edge_table(edge_table,verts,props,face_props)
-
-#print("faces: ",faces)
-  #print("colors: ",face_cols)
-  #print("uvs: ",face_uvs)
+  print("edges: ",edges)
+  faces,face_cols,face_uvs,hide_edges = faces_from_edge_table(edge_table,verts,props,face_props,edges)
+  print("edges: ",edges)
+  print("faces: ",faces)
+  print("colors: ",face_cols)
+  print("uvs: ",face_uvs)
+ 
+  print("hide edges: ",hide_edges)
 
   me = bpy.data.meshes.new(shape_name)
   ob = bpy.data.objects.new(shape_name,me)
   bpy.context.scene.objects.link(ob)
-  me.from_pydata(verts,[],faces)
-  me.update(calc_edges=True)
+  #me.from_pydata(verts,[],faces)
+  #me.update(calc_edges=True)
 
-  build_hard_edges(ob,hard_edges,edge_table)
+  me.vertices.add(len(verts))
+  me.vertices.foreach_set("co", unpack_list(verts))
+  me.faces.add(len(faces))
+  me.faces.foreach_set("vertices_raw",unpack_face_list(faces))
+  me.edges.add(len(edges))
+  me.edges.foreach_set("vertices",unpack_list(edges))
+  me.validate()
+ # me.update(calc_edges=True)
+  
+  b_edges = me.edges
+  for i in range(len(b_edges)):
+    (v0,v1) = b_edges[i].vertices
+    print("edge ", i, " ",v0,"-",v1)
+
+  build_hard_edges(me,hard_edges)
+  hide_fgon_edges(me,hide_edges)
   if len(face_cols) > 0: build_face_colors(me,face_cols)
   if len(face_uvs) > 0: build_face_uvs(me,face_uvs)
   for i in range(len(faces)):
