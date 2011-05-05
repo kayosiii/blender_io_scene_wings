@@ -5,26 +5,36 @@ you will then need to enable the addon in file->user preferences
 
 The following works
 
-*- Basic Geometry
-*- Ngons *
+*- geometry including ngons 
 *- vertex colors
 *- uv coords
-*- hard edges
+*- hard edges *
 *- virtual mirror **
 *- opengl material properties
 *- multiple materials per face
-*- external textures 
+*- external textures
+*- lights ***
 
 The following are not implemented yet
 
-*- internal textures ***
-*- cameras
-*- lights
+*- cameras ****
+*- internal textures *****
 *- folders/hidden/editable/etc
 *- holes
 *- export
+*- ui options
 
-currently the following are known issues: -
-* ngons are converted to tris - long term it would be good to convert these to fgons (or wait for bmesh)
-** virtual mirror currently only works on x axis - will need to calculate normal on the mirror face
-*** doesn't seem possible with the current python api - not without workarounds anyways
+notes
+*       to test this meshes have a subdision modifier attached to them by default
+
+**      currently only shows correctly if virtual mirror was on x axis... I have plans to make this work for
+        any orrientation but i haven't implented them yet
+
+***     to match the behaviour of lights in wings3d lights have a TrackTo constraint that points at the
+        light towards a dummy positioned at the wings aim point.
+
+****    cameras will import but are not positioned correctly yet...
+
+*****   there doesn't seem to be any way to create images from memory chunks in current blender pyhton api
+        will require either an api update or a workaround of writing image to disk first
+

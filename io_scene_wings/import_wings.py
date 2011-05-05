@@ -2,6 +2,7 @@ import bpy
 import struct,time,sys,os,zlib,io,mathutils
 from mathutils.geometry import tesselate_polygon
 from io_utils import load_image, unpack_list, unpack_face_list
+from math import radians,sin,cos
 
 def BPyMesh_ngon(from_data, indices, PREF_FIX_LOOPS=True):
     '''
@@ -339,32 +340,33 @@ def read_double_from_string(data):
   double_str = double_str.rstrip("\x00")
   return float(double_str)
 
-def read_attribute(data):
-  read_tuple_header(data)
-  attrib_type = read_token(data)
-  print("attrib type: ",attrib_type)
-  if attrib_type == b'pst':
-    t = read_token(data)
-    return (attrib_type,t)
-  token = data.read(1)
-  if token == token_double_str:
-    t = read_double_from_string(data)
-  elif token == token_tuple:
-    val = []
-    size, = struct.unpack(">B",data.read(1))
-    for i in range(size):
-      data.read(1)
-      d = read_double_from_string(data)
-      val.append(d)
-    if size == 2:
-      t = (val[0],val[1])
-    elif size == 3:
-      t = (val[0],val[1],val[2])
-    else:
-      t = (val[0],val[1],val[2],val[3])
-  else:
-    t = read_token(data)
-  return (attrib_type,t)
+#def read_attribute(data):
+  #read_tuple_header(data)
+  #attrib_type = read_token(data)
+  ##token = data.read(1)
+  #if attrib_type == b'pst':
+    #print ("pst skipping")
+    #skip_token(data)
+    #return (attrib_type,[])
+  #if token == token_double_str:
+    #t = read_double_from_string(data)
+  #elif token == token_tuple:
+    #val = []
+    #size, = struct.unpack(">B",data.read(1))
+    #for i in range(size):
+      #data.read(1)
+      #d = read_double_from_string(data)
+      #val.append(d)
+    #if size == 2:
+      #t = (val[0],val[1])
+    #elif size == 3:
+      #t = (val[0],val[1],val[2])
+    #else:
+      #t = (val[0],val[1],val[2],val[3])
+  #else:
+    #t = read_token(data)
+    
+  #return (attrib_type,t)
     
 def read_array_as_dict(data,fn=read_key,strip=1):
   out = {}
@@ -690,15 +692,43 @@ def read_prop(data):
     out = read_array(data,read_view)
   elif prop_type == b'images':
     out = read_array(data,read_image)
-  #elif prop_type == b'lights':
-    #out = read_array(data,read_light)
+  elif prop_type == b'lights':
+    out = read_array(data,read_light)
   else :
     skip_token(data)
     out = []
   return (prop_type,out)
 
 def read_view(data):
-  return []
+  read_tuple_header(data)
+  skip_token(data) #view
+  v_props = read_array_as_dict(data)
+  camera_name = v_props[b'name']
+  cam = bpy.data.cameras.new(camera_name)
+  ob = bpy.data.objects.new(camera_name,cam)
+  bpy.context.scene.objects.link(ob)
+  r = v_props[b'distance_to_aim']
+  az = radians(v_props[b'azimuth'])
+  el = radians(v_props[b'elevation'])
+  (track_x,track_y)=  v_props[b'tracking'] #TODO figure out what this does cameras will probably not be positioned properly until
+  (x,y,z) = v_props[b'aim' ]
+  cx = r*sin(el)*cos(az)
+  cy = r*sin(el)*sin(az)
+  cz = r*cos(el)
+  ob.location = (cx + x,cy - z,cz + y)
+  dummy = bpy.data.objects.new(cam.name + "_aim", None)
+  dummy.location = (x,-z,y)
+  dummy.scale = (0.2, 0.2, 0.2)
+  bpy.context.scene.objects.link(dummy)
+  aim = ob.constraints.new('TRACK_TO')
+  aim.target = dummy
+  aim.track_axis = 'TRACK_NEGATIVE_Z'
+  aim.up_axis = 'UP_Y'
+  ob.parent = dummy
+  cam.angle = radians(v_props[b'fov'])
+  cam.clip_start = v_props[b'hither']
+  cam.clip_end = v_props[b'yon']
+  
 
 def read_image(data):
   read_tuple_header(data)
@@ -711,6 +741,7 @@ def read_light(data):
   light_name = read_token(data)
   print ("light name::: ",light_name)
   out = read_array_as_dict(data,read_light_section)
+  #print ("light: ",out)
   l_props = out[b'opengl']
   l_type = l_props[b'type']
   if l_type == b'infinite':
@@ -719,12 +750,26 @@ def read_light(data):
   elif l_type == b'point':
     light = bpy.data.lamps.new(light_name,'POINT')
     set_light_common_props(light,l_props)
+    if b'linear_attenuation' in l_props:
+      light.linear_attenuation = l_props[b'linear_attenuation']
+    if b'quadratic_attenuation' in l_props:
+      light.quadratic_attenuation = l_props[b'quadratic_attenuation']
   elif l_type == b'spot':
     light = bpy.data.lamps.new(light_name,'SPOT')
     set_light_common_props(light,l_props)
+    if b'linear_attenuation' in l_props:
+      light.linear_attenuation = l_props[b'linear_attenuation']
+    if b'quadratic_attenuation' in l_props:
+      light.quadratic_attenuation = l_props[b'quadratic_attenuation']
+    if b'cone_angle' in l_props:
+      light.spot_size = radians(l_props[b'cone_angle'])
+    if b'spot_exponent' in l_props:
+      light.spot_blend = l_props[b'spot_exponent']
   elif l_type == b'area':
     light = bpy.data.lamps.new(light_name,'AREA')
     set_light_common_props(light,l_props)
+    if b'mesh' in l_props:
+        print ("MESH >>>> ",l_props[b'mesh'])
   return (light_name,out)
   
 def read_light_section(data):
@@ -732,14 +777,40 @@ def read_light_section(data):
   attrib_name = read_token(data)
   print ("lightattrib name: ",attrib_name)
   if attrib_name == b'opengl':
-    out = read_array_as_dict(data,read_attribute)
+    out = read_array_as_dict(data)
+  #elif attrib_name == b'pst':
+    #skip_token(data)
+    #out = []
   else: out = read_token(data)
   return (attrib_name,out)
 
+
 def set_light_common_props(light,props):
-  ob = bpy.data.objects(light.name,light)
+  ob = bpy.data.objects.new(light.name,light)
   bpy.context.scene.objects.link(ob)
-  print ("light props: ",props)
+  #print ("light props: ",props)
+  if b'position' in props:
+    (x,y,z) = props[b'position']
+    ob.location = (x,-z,y)
+  if b'aim_point' in props:
+    dummy = bpy.data.objects.new(light.name + "_aim", None)
+    (x,y,z) = props[b'aim_point']
+    dummy.location = (x,-z,y)
+    dummy.scale = (0.2, 0.2, 0.2)
+    bpy.context.scene.objects.link(dummy)
+    aim = ob.constraints.new('TRACK_TO')
+    aim.target = dummy
+    aim.track_axis = 'TRACK_NEGATIVE_Z'
+    aim.up_axis = 'UP_Y'
+    ob.parent = dummy
+  if b'diffuse' in props:
+    (r,g,b,a) = props[b'diffuse']
+    light.color = (r,g,b)
+  if b'ambient' in props:
+    (r,g,b,a) = props[b'ambient']
+  if b'specular' in props:
+    (r,g,b,a) = props[b'specular']
+
 
 def read_material_part(data):
   read_tuple_header(data)
