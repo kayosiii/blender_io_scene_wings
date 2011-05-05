@@ -1,0 +1,39 @@
+This is a plugin for blender
+currently to install you will need to copy this folder to the blender addons folder eg blender-2.57b/2.57/scripts/addons/
+you will then need to enable the addon in file->user preferences
+
+
+The following works
+
+*- geometry including ngons
+*- vertex colors
+*- uv coords
+*- hard edges *
+*- virtual mirror **
+*- opengl material properties
+*- multiple materials per face
+*- external textures
+*- lights ***
+
+The following are not implemented yet
+
+*- cameras ****
+*- internal textures *****
+*- folders/hidden/editable/etc
+*- holes
+*- export
+*- ui options
+
+notes
+*       to test this meshes have a subdision modifier attached to them by default
+
+**      currently only shows correctly if virtual mirror was on x axis... I have plans to make this work for
+        any orrientation but i haven't implented them yet
+
+***     to match the behaviour of lights in wings3d lights have a TrackTo constraint that points at the
+        light towards a dummy positioned at the wings aim point.
+
+****    cameras will import but are not positioned correctly yet...
+
+*****   there doesn't seem to be any way to create images from memory chunks in current blender pyhton api
+        will require either an api update or a workaround of writing image to disk first
