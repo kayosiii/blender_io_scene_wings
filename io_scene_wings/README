@@ -11,30 +11,35 @@ The following works
 *- hard edges *
 *- virtual mirror **
 *- opengl material properties
-*- multiple materials per face
-*- external textures
-*- lights ***
-
-The following are not implemented yet
-
-*- cameras ****
-*- internal textures *****
-*- folders/hidden/editable/etc
+*- multiple materials per shape
+*- external textures ***
+*- lights ****
+*- folders/hidden/editable/etc *****
 *- holes
-*- export
-*- ui options
 
 notes
 *       to test this meshes have a subdision modifier attached to them by default
 
-**      currently only shows correctly if virtual mirror was on x axis... I have plans to make this work for
-        any orrientation but i haven't implented them yet
+**      creates a dummy object to correctly orient the virtual mirror. Be careful to select this as well when moving the object
 
-***     to match the behaviour of lights in wings3d lights have a TrackTo constraint that points at the
+***     diffuse is mapped to diffuse, gloss to specular, bump and normal to normal. may load in multiple
+        copies of the same texture at present
+
+****    to match the behaviour of lights in wings3d lights have a TrackTo constraint that points at the
         light towards a dummy positioned at the wings aim point.
 
-****    cameras will import but are not positioned correctly yet...
+*****   folders are implemented as dummy parents. hidden objects in wings are imported an hidden and non renderable objects in Blender
 
-*****   there doesn't seem to be any way to create images from memory chunks in current blender pyhton api
+The following are not implemented yet
+
+*- cameras *
+*- internal textures **
+*- export
+*- ui options
+
+
+*   cameras will import but are not positioned correctly yet... can anybody tell me what tracking does
+
+**   there doesn't seem to be any way to create images from memory chunks in current blender pyhton api
         will require either an api update or a workaround of writing image to disk first
 

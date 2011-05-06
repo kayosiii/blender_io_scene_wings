@@ -1,6 +1,6 @@
 import bpy
 import struct,time,sys,os,zlib,io,mathutils
-from mathutils.geometry import tesselate_polygon
+from mathutils.geometry import tesselate_polygon,normal
 from io_utils import load_image, unpack_list, unpack_face_list
 from math import radians,sin,cos
 
@@ -418,6 +418,16 @@ def build_vert_table(edge_table):
     vert_table[ve]=i
   return vert_table
 
+def get_mirror_face(fvs,verts):
+   if len(fvs) > 4:
+     ngons = BPyMesh_ngon(verts,fvs)
+     (i0,i1,i2) = ngons[int(len(ngons)/2)]
+     f = [fvs[i0],fvs[i1],fvs[i2]]
+   else :
+     f = fvs
+   return f
+
+     
 def faces_from_edge_table(edge_table,verts,props,face_props,edges,use_cols=0,use_uvs=0):
   face_table = build_face_table(edge_table)
   faces = []
@@ -425,12 +435,16 @@ def faces_from_edge_table(edge_table,verts,props,face_props,edges,use_cols=0,use
   face_uvs = []
   hide_edges = []
   mirror_face = -1
-  if b'mirror_face' in props : mirror_face = props[b'mirror_face']
+  extra_faces = 0
+  mirror_face_out = None
+  if b'holes' in props:
+    holes = props[b'holes']
+  
+  if b'mirror_face' in props :
+    mirror_face = props[b'mirror_face']
   
   for i in range(len(face_table)):
-    if i ==  mirror_face :
-      del face_props[i]
-      continue
+
     fvs = []
     fcs = []
     fuvs = []
@@ -460,6 +474,17 @@ def faces_from_edge_table(edge_table,verts,props,face_props,edges,use_cols=0,use
     fvs.insert(0,fvs.pop())
     fcs.reverse()
     fuvs.reverse()
+
+    if i ==  mirror_face :
+      del face_props[i+extra_faces]
+      mirror_face_out = get_mirror_face(fvs,verts)
+      continue
+    elif holes != None:
+      if holes.count(i):
+        index = holes.index(i)
+        del holes[index]
+        del face_props[i+extra_faces]
+        continue
     
     if len(fvs) > 4: #ngon
       ngons = BPyMesh_ngon(verts,fvs)
@@ -474,11 +499,12 @@ def faces_from_edge_table(edge_table,verts,props,face_props,edges,use_cols=0,use
         if len(fcs)>0: face_cols.append([fcs[v0],fcs[v1],fcs[v2]])
         if len(fuvs)>0: face_uvs.append([fuvs[v0],fuvs[v1],fuvs[v2]])
         face_props.insert(i,face_prop)
+      extra_faces += len(ngons)-1
     else:
       faces.append(fvs)
       face_cols.append(fcs)
       face_uvs.append(fuvs)
-  return faces,face_cols,face_uvs,hide_edges
+  return faces,face_cols,face_uvs,hide_edges,mirror_face_out
 
 def sort_edge(v0,v1):
   if v0 >v1: return (v1,v0)
@@ -542,6 +568,30 @@ def build_face_uvs(me,face_uvs):
     if len(source_uvs) > 3:
       blender_uv_face.uv4 = source_uvs[3]
 
+def build_mirror_pivot(f,verts,ob):
+  v0 = mathutils.Vector(verts[f[0]])
+  v1 = mathutils.Vector(verts[f[1]])
+  v2 = mathutils.Vector(verts[f[2]])
+  if len(f) == 4:
+    v3 = mathutils.Vector(verts[f[3]])
+    norm = normal(v0,v1,v2,v3)
+  else:
+    v3 = None
+    norm = normal(v0,v1,v2)
+  rot = norm.to_track_quat('X','Z')
+  r = rot.to_euler('XYZ')
+  p0 = v0.lerp(v1,0.5)
+  if v3 == None: p1 = v2
+  else: p1 = v2.lerp(v3,0.5)
+  center = p0.lerp(p1,0.5)
+
+  dummy = bpy.data.objects.new(ob.name + "_mirror_pivot",None)
+  dummy.location = center.to_tuple()
+  print("ROTATING TO ",r.x," ",r.y," ",r.z)
+  dummy.rotation_euler = (r.x,r.y,r.z)
+  bpy.context.scene.objects.link(dummy)
+  return dummy
+
 def get_face_material(facemat):
   if b'material' in facemat: return facemat[b'material']
   else: return b'default'
@@ -587,10 +637,10 @@ def read_shape(data):
   print("verts: ",verts)
   hard_edges = read_array(data)
   print("hard_edges: ",hard_edges)
-  props = read_array_as_dict(data)
+  props = read_array_as_dict(data,read_prop)
   print("props: ",props)
   print("edges: ",edges)
-  faces,face_cols,face_uvs,hide_edges = faces_from_edge_table(edge_table,verts,props,face_props,edges)
+  faces,face_cols,face_uvs,hide_edges,mirror_face = faces_from_edge_table(edge_table,verts,props,face_props,edges)
   print("edges: ",edges)
   print("faces: ",faces)
   print("colors: ",face_cols)
@@ -629,8 +679,31 @@ def read_shape(data):
   mods = ob.modifiers
   mod = mods.new("subsurf",'SUBSURF')
   mod.levels = 2
-  if b'mirror_face' in props :
+  if  mirror_face != None:
+    pivot = build_mirror_pivot(mirror_face,verts,ob)
     mirror = mods.new("mirror",'MIRROR')
+    mirror.mirror_object = pivot
+    mirror.use_clip = True
+    mirror.use_mirror_merge = True
+    #pivot.parent = ob
+  if b'state' in props:
+    state = props[b'state']
+    if state == b'locked' or state == b'hidden_locked':
+      ob.hide_select = True
+    if state == b'hidden' or state == b'hidden_locked':
+      ob.hide = True
+      ob.hide_render = True
+  if b'plugin_states' in props:
+    plugin_states = props[b'plugin_states']
+    if b'wings_shape' in plugin_states:
+      folder = plugin_states[b'wings_shape']
+      if folder != b'no_folder':
+        dummy = bpy.data.objects.get(folder)
+        if dummy == None:
+          dummy = bpy.data.objects.new(folder,None)
+          bpy.context.scene.objects.link(dummy)
+        ob.parent = dummy
+
 
 def read_edge_set(data):
   return read_array_as_dict(data,read_edge)
@@ -684,8 +757,7 @@ def read_prop(data):
   if prop_type == b'scene_prefs':
     out = read_array(data)
   elif prop_type == b'plugin_states':
-    skip_array(data)
-    out = []
+    out = read_array_as_dict(data)
   elif prop_type == b'current_view':
     out = read_token(data)
   elif prop_type == b'views':
@@ -694,9 +766,10 @@ def read_prop(data):
     out = read_array(data,read_image)
   elif prop_type == b'lights':
     out = read_array(data,read_light)
+  elif prop_type == b'holes':
+    out = read_array(data)
   else :
-    skip_token(data)
-    out = []
+    out = read_token(data)
   return (prop_type,out)
 
 def read_view(data):
@@ -792,7 +865,7 @@ def set_light_common_props(light,props):
   if b'position' in props:
     (x,y,z) = props[b'position']
     ob.location = (x,-z,y)
-  if b'aim_point' in props:
+  if b'aim_point' in props and props[b'type'] != b'point': #point lights don't need to aim
     dummy = bpy.data.objects.new(light.name + "_aim", None)
     (x,y,z) = props[b'aim_point']
     dummy.location = (x,-z,y)
@@ -830,7 +903,7 @@ def read_material(data):
   print ("mats: ", mats)
   material = bpy.data.materials.get(name_str)
   if material == None:
-    material = bpy.data.materials.new(name_str)
+    return
   
   m_attribs = mats[b'opengl']
   if b'diffuse' in m_attribs :
@@ -854,7 +927,9 @@ def add_textures(images,mappings):
   for (index,image) in images:
 
     if b'filename' in image:
-      texture = bpy.data.textures.new(name=image[b'name'], type='IMAGE')
+      texture = bpy.data.textures.get(image[b'name'])
+      if texture == None:
+        texture = bpy.data.textures.new(name=image[b'name'], type='IMAGE')
       filenpath = image[b'filename']
       (dirname,filename) = os.path.split(filenpath)
       print ("filename: ",filename," dirname: ",dirname)
@@ -882,14 +957,29 @@ def add_textures(images,mappings):
                 texture.use_mipmap = True
                 texture.use_interpolation = True
                 texture.use_alpha = True
-                blender_material.use_transparency = True
-                blender_material.alpha = 0.0
+                mat.use_transparency = True
+                mat.alpha = 0.0
               else:
                 #print("adding non alpha texture")
                 mtex = mat.texture_slots.add()
                 mtex.texture = texture
                 mtex.texture_coords = 'UV'
                 mtex.use_map_color_diffuse = True
+            elif channel == b'gloss':
+              mtex = mat.texture_slots.add()
+              mtex.texture = texture
+              mtex.texture_coords = 'UV'
+              mtex.use_map_specular = True
+            elif channel == b'bump':
+              mtex = mat.texture_slots.add()
+              mtex.texture = texture
+              mtex.texture_coords = 'UV'
+              mtex.use_map_normal = True
+            elif channel == b'normal':
+              mtex = mat.texture_slots.add()
+              mtex.texture = texture
+              mtex.texture_coords = 'UV'
+              mtex.use_map_normal = True
 
 def load_wings_file(filepath):
   file = open(filepath,"rb")
