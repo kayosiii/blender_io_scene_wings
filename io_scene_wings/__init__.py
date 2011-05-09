@@ -25,41 +25,49 @@ class ImportWings(bpy.types.Operator, ImportHelper):
 
     filename_ext = ".wings"
     filter_glob = StringProperty(default="*.wings", options={'HIDDEN'})
+
+    use_lamps = BoolProperty(name="Lamps", description="Import Lights into scene",default=True)
+    use_cameras = BoolProperty(name="Cameras", description="Import Cameras into scene",default=False)
+    use_subsurfs = BoolProperty(name="SubSurface Modifier",description="Add subdivision surface modifier to each object",default=True)
+    use_hidden = BoolProperty(name="Hidden", description="Import hidden objects",default=True)
     
     def execute(self, context):
         from . import import_wings
         return import_wings.load(self, context, **self.as_keywords(ignore=("filter_glob",)))
 
-#class ExportBVH(bpy.types.Operator, ExportHelper):
-#   '''Save a BVH motion capture file from an armature'''
-#    bl_idname = "export_wings.wings"
-#    bl_label = "Export Wings"
+    def draw(self,context):
+      layout = self.layout
 
-#    filename_ext = ".wings"
-#    filter_glob = StringProperty(default="*.wings", options={'HIDDEN'})
-    
-#    def execute(self, context):
-#        from . import export_wings
-#        return export_wings.save(self, context, **self.as_keywords(ignore=("check_existing", "filter_glob")))
-
+      layout.prop(self,"use_lamps")
+      layout.prop(self,"use_cameras")
+      layout.prop(self,"use_subsurfs")
+      layout.prop(self,"use_hidden")
+      
+class ExportWings(bpy.types.Operator, ExportHelper):
+  '''Save a Wings3d file'''
+  bl_idname = "export_wings.wings"
+  bl_label = "Export Wings"
+  filename_ext = ".wings"
+  filter_glob = StringProperty(default="*.wings", options={'HIDDEN'})
+  def execute(self, context):
+    from . import export_wings
+    return export_wings.save(self, context, **self.as_keywords(ignore=("check_existing", "filter_glob")))
 
 def menu_func_import(self, context):
     self.layout.operator(ImportWings.bl_idname, text="Wings3d (.wings)")
 
-
-#def menu_func_export(self, context):
-#    self.layout.operator(ExportWings.bl_idname, text="Wings3d (.wings)")
+def menu_func_export(self, context):
+   self.layout.operator(ExportWings.bl_idname, text="Wings3d (.wings)")
   
-
 def register():
   bpy.utils.register_module(__name__);
   bpy.types.INFO_MT_file_import.append(menu_func_import);
-  #bpy.types.INFO_MT_file_export.append(menu_func_export);
+  bpy.types.INFO_MT_file_export.append(menu_func_export);
 
 def unregister():
   bpy.utils.unregister_module(__name__);
   bpy.types.INFO_MT_file_import.remove(menu_func_import);
-  #bpy.types.INFO_MT_file_export.remove(menu_func_export);
+  bpy.types.INFO_MT_file_export.remove(menu_func_export);
 
 if __name__ == "__main__":
   register()

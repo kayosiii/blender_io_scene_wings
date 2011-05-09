@@ -3,6 +3,7 @@ import struct,time,sys,os,zlib,io,mathutils
 from mathutils.geometry import tesselate_polygon,normal
 from io_utils import load_image, unpack_list, unpack_face_list
 from math import radians,sin,cos
+import os.path
 
 def BPyMesh_ngon(from_data, indices, PREF_FIX_LOOPS=True):
     '''
@@ -199,6 +200,8 @@ token_string = b'k'
 token_array_start = b'l'
 token_map = b'm'
 
+# read erlang binary data
+#========================
 def skip_token(data):
   token = data.read(1)
   if token == token_byte:
@@ -270,6 +273,7 @@ def read_token(data):
   elif token == token_string:
     size, = struct.unpack(">H",data.read(2))
     out = data.read(size)
+    print("out,",out)
     return str(out,encoding="utf8")
   elif token == token_array_start:
     out = read_array(data,strip=0)
@@ -318,13 +322,13 @@ def read_array(data,fn=read_token,strip=1):
   data.read(1)
   return out
 
-def foreach_in_array(data,fn=read_token,strip=1):
-  token = data.read(1)
-  if token == token_array_end: return
-  size, = struct.unpack(">L",data.read(4))
-  for i in range(size): fn(data)
-  data.read(1)
-  return
+#def foreach_in_array(data,fn=read_token,strip=1):
+  #token = data.read(1)
+  #if token == token_array_end: return
+  #size, = struct.unpack(">L",data.read(4))
+  #for i in range(size): fn(data)
+  #data.read(1)
+  #return
 
 def read_key(data):
   read_tuple_header(data)
@@ -339,34 +343,6 @@ def read_double_from_string(data):
   double_str = str(bd,encoding="utf8")
   double_str = double_str.rstrip("\x00")
   return float(double_str)
-
-#def read_attribute(data):
-  #read_tuple_header(data)
-  #attrib_type = read_token(data)
-  ##token = data.read(1)
-  #if attrib_type == b'pst':
-    #print ("pst skipping")
-    #skip_token(data)
-    #return (attrib_type,[])
-  #if token == token_double_str:
-    #t = read_double_from_string(data)
-  #elif token == token_tuple:
-    #val = []
-    #size, = struct.unpack(">B",data.read(1))
-    #for i in range(size):
-      #data.read(1)
-      #d = read_double_from_string(data)
-      #val.append(d)
-    #if size == 2:
-      #t = (val[0],val[1])
-    #elif size == 3:
-      #t = (val[0],val[1],val[2])
-    #else:
-      #t = (val[0],val[1],val[2],val[3])
-  #else:
-    #t = read_token(data)
-    
-  #return (attrib_type,t)
     
 def read_array_as_dict(data,fn=read_key,strip=1):
   out = {}
@@ -387,16 +363,55 @@ def read_tuple_header(data):
     misc,size = struct.unpack(">BB", data.read(2))
     return size
 
-def read_attribute_list(data,fn=read_token):
-  data.read(1)
-  size, = struct.unpack(">L",data.read(4))
-  out = {}
-  for i in range(size):
-    read_tuple_header(data)
-    attrib = read_token(data)
-    value = fn(data)
-    out[attrib] = value
-  return out
+# read specific mesh data
+# =======================
+
+def read_edge(data):
+  read_tuple_header(data)
+  edge_type = read_token(data)
+  if edge_type == b'edge':
+    e = []
+    for i in range(8):
+      token = data.read(1)
+      if token == token_byte:
+        entry, = struct.unpack(">B",data.read(1))
+        e.append(entry)
+      elif token == token_int32:
+        entry, = struct.unpack(">L",data.read(4))
+        e.append(entry)
+    return (edge_type,e)
+  elif edge_type == b'uv_lt':
+    return (edge_type,read_texcoord(data))
+  elif edge_type == b'uv_rt':
+    return (edge_type,read_texcoord(data))
+  elif edge_type == b'color_lt':
+    return (edge_type,read_color(data))
+  elif edge_type == b'color_rt':
+    return (edge_type,read_color(data))
+
+def read_texcoord(data):
+  data.read(5)
+  u,v = struct.unpack(">dd",data.read(16))
+  return (u,v)
+
+def read_color(data):
+  data.read(5)
+  r,g,b = struct.unpack(">fff",data.read(12))
+  return (r,g,b)
+
+def read_vertex_array(data):
+  out = read_array(data,read_vertex)
+  return out[0]
+
+def read_vertex(data):
+  data.read(5)
+  x,y,z = struct.unpack(">ddd",data.read(24))
+  return (x,-z,y)
+
+
+
+# convert edge data to face data
+# ===============================
 
 def build_face_table(edge_table):
   face_table = {}
@@ -418,6 +433,8 @@ def build_vert_table(edge_table):
     vert_table[ve]=i
   return vert_table
 
+# grab a tri or a quad from what would be the mirror face
+
 def get_mirror_face(fvs,verts):
    if len(fvs) > 4:
      ngons = BPyMesh_ngon(verts,fvs)
@@ -427,7 +444,24 @@ def get_mirror_face(fvs,verts):
      f = fvs
    return f
 
-     
+def sort_edge(v0,v1):
+  if v0 >v1: return (v1,v0)
+  return (v0,v1)
+
+def add_edge_if_new(face,v0,v1,edges,new_edges,hide_edges):
+  print ("new edges: ", new_edges)
+  (v0,v1) = sort_edge(v0,v1)
+  f0 = face[v0]
+  f1 = face[v1]
+  for (a,b) in new_edges:
+    print("f1 ",f0," a ",a," f2 ",f1," b ",b)
+    if f0 == a and f1 == b: return
+  if v0 + 1 == v1: return
+  if v1 == len(face)-1 and v0 == 0: return
+  new_edges.append((f0,f1))
+  hide_edges.append(len(edges))
+  edges.append((f0,f1))
+
 def faces_from_edge_table(edge_table,verts,props,face_props,edges,use_cols=0,use_uvs=0):
   face_table = build_face_table(edge_table)
   faces = []
@@ -437,6 +471,7 @@ def faces_from_edge_table(edge_table,verts,props,face_props,edges,use_cols=0,use
   mirror_face = -1
   extra_faces = 0
   mirror_face_out = None
+  holes = None
   if b'holes' in props:
     holes = props[b'holes']
   
@@ -506,34 +541,123 @@ def faces_from_edge_table(edge_table,verts,props,face_props,edges,use_cols=0,use
       face_uvs.append(fuvs)
   return faces,face_cols,face_uvs,hide_edges,mirror_face_out
 
-def sort_edge(v0,v1):
-  if v0 >v1: return (v1,v0)
-  return (v0,v1)
+# read objects from erlang data
+# =============================
 
-def add_edge_if_new(face,v0,v1,edges,new_edges,hide_edges):
-  print ("new edges: ", new_edges)
-  (v0,v1) = sort_edge(v0,v1)
-  f0 = face[v0]
-  f1 = face[v1]
-  for (a,b) in new_edges:
-    print("f1 ",f0," a ",a," f2 ",f1," b ",b)
-    if f0 == a and f1 == b: return
-  if v0 + 1 == v1: return
-  if v1 == len(face)-1 and v0 == 0: return
-  new_edges.append((f0,f1))
-  hide_edges.append(len(edges))
-  edges.append((f0,f1))
+def read_shapes(data,use_subsurf,use_hidden):
+  token = data.read(1)
+  if token == token_array_end: return
+  size, = struct.unpack(">L",data.read(4))
+  for i in range(size): read_shape(data,use_subsurf,use_hidden)
+  data.read(1)
+  return
 
-#def find_edge(edge,edges):
-  #a = edge[0]
-  #b = edge[1]
-  #for i in range(len(edges)):
-    #e = edges[i]
-    #if a == e.vertices[0] and b == e.vertices[1]:
-      #return e
-    #if a == e.vertices[1] and b == e.vertices[0]:
-      #return e
-      
+def read_shape(data,use_subsurf,use_hidden):
+  read_tuple_header(data)
+  skip_token(data) #object
+  shape_name = read_token(data)
+  print ("shape: ",shape_name)
+  read_tuple_header(data)
+  skip_token(data) #winged
+
+  #read mesh data
+  edge_table = read_array(data,read_edge_set)
+  print("edge_table: ",edge_table)
+  face_props = read_array(data,read_array_as_dict)
+  print("face_mats: ",face_props)
+  verts = read_array(data,read_vertex_array)
+  print("verts: ",verts)
+  hard_edges = read_array(data)
+  print("hard_edges: ",hard_edges)
+  props = read_array_as_dict(data,read_prop)
+  print("props: ",props)
+
+  # if we are ignoring hidden objects
+  # we can stop now
+  if use_hidden == True and b'state' in props:
+    state = props[b'state']
+    if state == b'hidden' or state == b'hidden_locked':
+      return
+
+  # make a list of edges with just the vert part
+  # of the list eg [(v0,v1),(v0,v1)...]
+  edges = get_edges(edge_table)
+  print("edges: ",edges)
+
+  # build a list of faces from edge data,
+  # also vertex colors, face_uvs and a few other bits
+  # and pieces
+  faces,face_cols,face_uvs,hide_edges,mirror_face = faces_from_edge_table(edge_table,verts,props,face_props,edges)
+  print("edges: ",edges)
+  print("faces: ",faces)
+  print("colors: ",face_cols)
+  print("uvs: ",face_uvs)
+  print("hide edges: ",hide_edges)
+
+  #create bleneder mesh
+  me = bpy.data.meshes.new(shape_name)
+  ob = bpy.data.objects.new(shape_name,me)
+  bpy.context.scene.objects.link(ob)
+  me.vertices.add(len(verts))
+  me.vertices.foreach_set("co", unpack_list(verts))
+  me.faces.add(len(faces))
+  me.faces.foreach_set("vertices_raw",unpack_face_list(faces))
+  me.edges.add(len(edges))
+  me.edges.foreach_set("vertices",unpack_list(edges))
+  me.validate()
+ # me.update(calc_edges=True)
+
+  #add edges to blender mesh, mark special edges
+  #b_edges = me.edges
+  #for i in range(len(b_edges)):
+    #(v0,v1) = b_edges[i].vertices
+    #print("edge ", i, " ",v0,"-",v1)
+    
+  build_hard_edges(me,hard_edges)
+  hide_fgon_edges(me,hide_edges)
+  
+  if len(face_cols) > 0: build_face_colors(me,face_cols)
+  if len(face_uvs) > 0: build_face_uvs(me,face_uvs)
+  for i in range(len(faces)): me.faces[i].use_smooth = True
+  add_material_indices(me,face_props)
+
+  mods = ob.modifiers
+  if use_subsurf == True:
+    mod = mods.new("subsurf",'SUBSURF')
+    mod.levels = 2
+  if  mirror_face != None:
+    pivot = build_mirror_pivot(mirror_face,verts,ob)
+    mirror = mods.new("mirror",'MIRROR')
+    mirror.mirror_object = pivot
+    mirror.use_clip = True
+    mirror.use_mirror_merge = True
+    #ob.parent = pivot
+    
+  if b'state' in props:
+    state = props[b'state']
+    if state == b'locked' or state == b'hidden_locked':
+      ob.hide_select = True
+    if state == b'hidden' or state == b'hidden_locked':
+      ob.hide = True
+      ob.hide_render = True
+  if b'plugin_states' in props:
+    plugin_states = props[b'plugin_states']
+    if b'wings_shape' in plugin_states:
+      folder = plugin_states[b'wings_shape']
+      if folder != b'no_folder':
+        dummy = bpy.data.objects.get(folder)
+        if dummy == None:
+          dummy = bpy.data.objects.new(folder,None)
+          bpy.context.scene.objects.link(dummy)
+        ob.parent = dummy
+  
+def read_edge_set(data):
+  return read_array_as_dict(data,read_edge)
+  
+
+# build mesh in blender functions
+# ===============================
+
 def build_hard_edges(me,hard_edges):
   for hard_edge in hard_edges:
     edge = me.edges[hard_edge]
@@ -543,7 +667,7 @@ def hide_fgon_edges(me,hide_edges):
   for hidden_edge in hide_edges:
     edge = me.edges[hidden_edge]
     edge.is_fgon = True
-    
+
 def build_face_colors(me,face_cols):
   blender_me_vcols = me.vertex_colors.new()
   for i in range(len(face_cols)):
@@ -620,135 +744,8 @@ def get_edges(edge_table):
     edges.append((edge[0],edge[1]))
   return edges
 
-def read_shape(data):
-  read_tuple_header(data)
-  skip_token(data) #object
-  shape_name = read_token(data)
-  print ("shape: ",shape_name)
-  read_tuple_header(data)
-  skip_token(data) #winged
-  edge_table = read_array(data,read_edge_set)
-  print("edge_table: ",edge_table)
-  edges = get_edges(edge_table)
- 
-  face_props = read_array(data,read_array_as_dict)
-  print("face_mats: ",face_props)
-  verts = read_array(data,read_vertex_array)
-  print("verts: ",verts)
-  hard_edges = read_array(data)
-  print("hard_edges: ",hard_edges)
-  props = read_array_as_dict(data,read_prop)
-  print("props: ",props)
-  print("edges: ",edges)
-  faces,face_cols,face_uvs,hide_edges,mirror_face = faces_from_edge_table(edge_table,verts,props,face_props,edges)
-  print("edges: ",edges)
-  print("faces: ",faces)
-  print("colors: ",face_cols)
-  print("uvs: ",face_uvs)
- 
-  print("hide edges: ",hide_edges)
-
-  me = bpy.data.meshes.new(shape_name)
-  ob = bpy.data.objects.new(shape_name,me)
-  bpy.context.scene.objects.link(ob)
-  #me.from_pydata(verts,[],faces)
-  #me.update(calc_edges=True)
-
-  me.vertices.add(len(verts))
-  me.vertices.foreach_set("co", unpack_list(verts))
-  me.faces.add(len(faces))
-  me.faces.foreach_set("vertices_raw",unpack_face_list(faces))
-  me.edges.add(len(edges))
-  me.edges.foreach_set("vertices",unpack_list(edges))
-  me.validate()
- # me.update(calc_edges=True)
-  
-  b_edges = me.edges
-  for i in range(len(b_edges)):
-    (v0,v1) = b_edges[i].vertices
-    print("edge ", i, " ",v0,"-",v1)
-
-  build_hard_edges(me,hard_edges)
-  hide_fgon_edges(me,hide_edges)
-  if len(face_cols) > 0: build_face_colors(me,face_cols)
-  if len(face_uvs) > 0: build_face_uvs(me,face_uvs)
-  for i in range(len(faces)):
-    me.faces[i].use_smooth = True
-
-  add_material_indices(me,face_props)
-  mods = ob.modifiers
-  mod = mods.new("subsurf",'SUBSURF')
-  mod.levels = 2
-  if  mirror_face != None:
-    pivot = build_mirror_pivot(mirror_face,verts,ob)
-    mirror = mods.new("mirror",'MIRROR')
-    mirror.mirror_object = pivot
-    mirror.use_clip = True
-    mirror.use_mirror_merge = True
-    #pivot.parent = ob
-  if b'state' in props:
-    state = props[b'state']
-    if state == b'locked' or state == b'hidden_locked':
-      ob.hide_select = True
-    if state == b'hidden' or state == b'hidden_locked':
-      ob.hide = True
-      ob.hide_render = True
-  if b'plugin_states' in props:
-    plugin_states = props[b'plugin_states']
-    if b'wings_shape' in plugin_states:
-      folder = plugin_states[b'wings_shape']
-      if folder != b'no_folder':
-        dummy = bpy.data.objects.get(folder)
-        if dummy == None:
-          dummy = bpy.data.objects.new(folder,None)
-          bpy.context.scene.objects.link(dummy)
-        ob.parent = dummy
-
-
-def read_edge_set(data):
-  return read_array_as_dict(data,read_edge)
-  
-def read_edge(data):
-  read_tuple_header(data)
-  edge_type = read_token(data)
-  if edge_type == b'edge':
-    e = []
-    for i in range(8):
-      token = data.read(1)
-      if token == token_byte:
-        entry, = struct.unpack(">B",data.read(1))
-        e.append(entry)
-      elif token == token_int32:
-        entry, = struct.unpack(">L",data.read(4))
-        e.append(entry)
-    return (edge_type,e)
-  elif edge_type == b'uv_lt':
-    return (edge_type,read_texcoord(data))
-  elif edge_type == b'uv_rt':
-    return (edge_type,read_texcoord(data))
-  elif edge_type == b'color_lt':
-    return (edge_type,read_color(data))
-  elif edge_type == b'color_rt':
-    return (edge_type,read_color(data))
-  
-def read_texcoord(data):
-  data.read(5)
-  u,v = struct.unpack(">dd",data.read(16))
-  return (u,v)
-
-def read_color(data):
-  data.read(5)
-  r,g,b = struct.unpack(">fff",data.read(12))
-  return (r,g,b)
-
-def read_vertex_array(data):
-  out = read_array(data,read_vertex)
-  return out[0]
-  
-def read_vertex(data):
-  data.read(5)
-  x,y,z = struct.unpack(">ddd",data.read(24))
-  return (x,-z,y)
+# property related functions
+# ==========================
 
 def read_prop(data):
   read_tuple_header(data)
@@ -768,6 +765,9 @@ def read_prop(data):
     out = read_array(data,read_light)
   elif prop_type == b'holes':
     out = read_array(data)
+  elif prop_type == b'selection':
+    skip_token(data)
+    out = []
   else :
     out = read_token(data)
   return (prop_type,out)
@@ -776,33 +776,36 @@ def read_view(data):
   read_tuple_header(data)
   skip_token(data) #view
   v_props = read_array_as_dict(data)
-  camera_name = v_props[b'name']
-  cam = bpy.data.cameras.new(camera_name)
-  ob = bpy.data.objects.new(camera_name,cam)
-  bpy.context.scene.objects.link(ob)
-  r = v_props[b'distance_to_aim']
-  az = radians(v_props[b'azimuth'])
-  el = radians(v_props[b'elevation'])
-  (track_x,track_y)=  v_props[b'tracking'] #TODO figure out what this does cameras will probably not be positioned properly until
-  (x,y,z) = v_props[b'aim' ]
-  cx = r*sin(el)*cos(az)
-  cy = r*sin(el)*sin(az)
-  cz = r*cos(el)
-  ob.location = (cx + x,cy - z,cz + y)
-  dummy = bpy.data.objects.new(cam.name + "_aim", None)
-  dummy.location = (x,-z,y)
-  dummy.scale = (0.2, 0.2, 0.2)
-  bpy.context.scene.objects.link(dummy)
-  aim = ob.constraints.new('TRACK_TO')
-  aim.target = dummy
-  aim.track_axis = 'TRACK_NEGATIVE_Z'
-  aim.up_axis = 'UP_Y'
-  ob.parent = dummy
-  cam.angle = radians(v_props[b'fov'])
-  cam.clip_start = v_props[b'hither']
-  cam.clip_end = v_props[b'yon']
-  
+  return v_props
 
+def build_cameras(views):
+  for view in views:
+    camera_name = view[b'name']
+    cam = bpy.data.cameras.new(camera_name)
+    ob = bpy.data.objects.new(camera_name,cam)
+    bpy.context.scene.objects.link(ob)
+    r = view[b'distance_to_aim']
+    az = radians(view[b'azimuth'])
+    el = radians(view[b'elevation'])
+    (track_x,track_y)=  view[b'tracking'] #TODO figure out what this does cameras will probably not be positioned properly until
+    (x,y,z) = view[b'aim' ]
+    cx = r*sin(el)*cos(az)
+    cy = r*sin(el)*sin(az)
+    cz = r*cos(el)
+    ob.location = (cx + x,cy - z,cz + y)
+    dummy = bpy.data.objects.new(cam.name + "_aim", None)
+    dummy.location = (x,-z,y)
+    dummy.scale = (0.2, 0.2, 0.2)
+    bpy.context.scene.objects.link(dummy)
+    aim = ob.constraints.new('TRACK_TO')
+    aim.target = dummy
+    aim.track_axis = 'TRACK_NEGATIVE_Z'
+    aim.up_axis = 'UP_Y'
+    ob.parent = dummy
+    cam.angle = radians(view[b'fov'])
+    cam.clip_start = view[b'hither']
+    cam.clip_end = view[b'yon']
+  
 def read_image(data):
   read_tuple_header(data)
   img_index = read_token(data)
@@ -814,35 +817,6 @@ def read_light(data):
   light_name = read_token(data)
   print ("light name::: ",light_name)
   out = read_array_as_dict(data,read_light_section)
-  #print ("light: ",out)
-  l_props = out[b'opengl']
-  l_type = l_props[b'type']
-  if l_type == b'infinite':
-    light = bpy.data.lamps.new(light_name,'SUN')
-    set_light_common_props(light,l_props)
-  elif l_type == b'point':
-    light = bpy.data.lamps.new(light_name,'POINT')
-    set_light_common_props(light,l_props)
-    if b'linear_attenuation' in l_props:
-      light.linear_attenuation = l_props[b'linear_attenuation']
-    if b'quadratic_attenuation' in l_props:
-      light.quadratic_attenuation = l_props[b'quadratic_attenuation']
-  elif l_type == b'spot':
-    light = bpy.data.lamps.new(light_name,'SPOT')
-    set_light_common_props(light,l_props)
-    if b'linear_attenuation' in l_props:
-      light.linear_attenuation = l_props[b'linear_attenuation']
-    if b'quadratic_attenuation' in l_props:
-      light.quadratic_attenuation = l_props[b'quadratic_attenuation']
-    if b'cone_angle' in l_props:
-      light.spot_size = radians(l_props[b'cone_angle'])
-    if b'spot_exponent' in l_props:
-      light.spot_blend = l_props[b'spot_exponent']
-  elif l_type == b'area':
-    light = bpy.data.lamps.new(light_name,'AREA')
-    set_light_common_props(light,l_props)
-    if b'mesh' in l_props:
-        print ("MESH >>>> ",l_props[b'mesh'])
   return (light_name,out)
   
 def read_light_section(data):
@@ -851,14 +825,44 @@ def read_light_section(data):
   print ("lightattrib name: ",attrib_name)
   if attrib_name == b'opengl':
     out = read_array_as_dict(data)
-  #elif attrib_name == b'pst':
-    #skip_token(data)
-    #out = []
   else: out = read_token(data)
   return (attrib_name,out)
 
+def build_lamps(lights):
+  #print("lights ",lights)
+  for (lamp_name,light) in lights:
+    print("light ",light)
+    if b'opengl' in light == False: continue
+    props = light[b'opengl']
+    lamp_type = props[b'type']
+    if lamp_type == b'infinite':
+      lamp = bpy.data.lamps.new(lamp_name,'SUN')
+      set_lamp_common_props(lamp,props)
+    elif lamp_type == b'point':
+      lamp = bpy.data.lamps.new(lamp_name,'POINT')
+      set_lamp_common_props(lamp,props)
+      if b'linear_attenuation' in props:
+        lamp.linear_attenuation = props[b'linear_attenuation']
+      if b'quadratic_attenuation' in props:
+        lamp.quadratic_attenuation = props[b'quadratic_attenuation']
+    elif lamp_type == b'spot':
+      lamp = bpy.data.lamps.new(lamp_name,'SPOT')
+      set_lamp_common_props(lamp,props)
+      if b'linear_attenuation' in props:
+        lamp.linear_attenuation = props[b'linear_attenuation']
+      if b'quadratic_attenuation' in props:
+        lamp.quadratic_attenuation = props[b'quadratic_attenuation']
+      if b'cone_angle' in props:
+        lamp.spot_size = radians(props[b'cone_angle'])
+      if b'spot_exponent' in props:
+        lamp.spot_blend = props[b'spot_exponent']
+    elif lamp_type == b'area':
+      lamp = bpy.data.lamps.new(lamp_name,'AREA')
+      set_lamp_common_props(lamp,props)
+      if b'mesh' in props:
+        print ("MESH >>>> ",props[b'mesh'])
 
-def set_light_common_props(light,props):
+def set_lamp_common_props(light,props):
   ob = bpy.data.objects.new(light.name,light)
   bpy.context.scene.objects.link(ob)
   #print ("light props: ",props)
@@ -884,6 +888,8 @@ def set_light_common_props(light,props):
   if b'specular' in props:
     (r,g,b,a) = props[b'specular']
 
+# materials related functions
+# ===========================
 
 def read_material_part(data):
   read_tuple_header(data)
@@ -903,8 +909,7 @@ def read_material(data):
   print ("mats: ", mats)
   material = bpy.data.materials.get(name_str)
   if material == None:
-    return
-  
+    return (mat_name,[])
   m_attribs = mats[b'opengl']
   if b'diffuse' in m_attribs :
     (r,g,b,a) = m_attribs[b'diffuse']
@@ -923,9 +928,9 @@ def read_material(data):
     material.specular_hardness = int(s*511)
   return (mat_name,mats[b'maps'])
 
-def add_textures(images,mappings):
+def add_textures(images,mappings,current_filepath):
   for (index,image) in images:
-
+    
     if b'filename' in image:
       texture = bpy.data.textures.get(image[b'name'])
       if texture == None:
@@ -933,7 +938,14 @@ def add_textures(images,mappings):
       filenpath = image[b'filename']
       (dirname,filename) = os.path.split(filenpath)
       print ("filename: ",filename," dirname: ",dirname)
-      texture.image = load_image(filename,dirname)
+      if os.path.isfile(filenpath):
+        texture.image = load_image(filename,dirname)
+      else:
+        (current_dir,cfilename) = os.path.split(current_filepath)
+        if os.path.isfile(current_dir + filename):
+          texture.image = load_image(current_dir,filename)
+        else: continue
+  
       has_data = texture.image.has_data
       mapkeys = mappings.keys()
       for mapkey in mapkeys:
@@ -981,6 +993,9 @@ def add_textures(images,mappings):
               mtex.texture_coords = 'UV'
               mtex.use_map_normal = True
 
+# core functions
+# ==============================
+
 def load_wings_file(filepath):
   file = open(filepath,"rb")
   header = file.read(15)
@@ -999,14 +1014,17 @@ def read_wings_header(data):
   read_tuple_header(data)
   return version
 
-def load(operator, context, filepath=""):
+def load(operator, context, filepath="",use_lamps=True,use_cameras=False,use_subsurfs=True,use_hidden=True):
   data = load_wings_file(filepath)
   version = read_wings_header(data)
   print ("version",version)
-  foreach_in_array(data,read_shape)
+  read_shapes(data,use_subsurfs,use_hidden)
   matmaps = read_array_as_dict(data,read_material)
   print ("matmaps: ",matmaps)
   props = read_array_as_dict(data,read_prop)
-  print ("Props: ",props)
-  if b'images' in props: add_textures(props[b'images'],matmaps)
+  #print ("Props: ",props)
+  if use_lamps == True and b'lights' in props:
+    build_lamps(props[b'lights'])
+  if b'images' in props: add_textures(props[b'images'],matmaps,filepath)
   return {'FINISHED'}
+  
