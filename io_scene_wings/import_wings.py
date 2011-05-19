@@ -209,7 +209,7 @@ def skip_token(data):
   elif token == token_int32:
     data.read(4)
   elif token == token_double_str:
-    data.read(30)
+    data.read(31)
   elif token == token_atom:
     size, = struct.unpack(">H",data.read(2))
     data.read(size)
@@ -286,7 +286,7 @@ def read_token(data):
 
 def read_tuple(data,strip=1):
   if strip > 0: data.read(strip)
-  
+
   size, = struct.unpack(">B",data.read(1))
   if size == 1:
     return read_token(data)
@@ -343,7 +343,7 @@ def read_double_from_string(data):
   double_str = str(bd,encoding="utf8")
   double_str = double_str.rstrip("\x00")
   return float(double_str)
-    
+
 def read_array_as_dict(data,fn=read_key,strip=1):
   out = {}
   if strip > 0:
@@ -474,10 +474,10 @@ def faces_from_edge_table(edge_table,verts,props,face_props,edges,use_cols=0,use
   holes = None
   if b'holes' in props:
     holes = props[b'holes']
-  
+
   if b'mirror_face' in props :
     mirror_face = props[b'mirror_face']
-  
+
   for i in range(len(face_table)):
 
     fvs = []
@@ -504,7 +504,7 @@ def faces_from_edge_table(edge_table,verts,props,face_props,edges,use_cols=0,use
           fuvs.append(edge_set[b'uv_lt'])
       current = next_edge
       if current == face_table[i]: break
-      
+
     fvs.reverse()
     fvs.insert(0,fvs.pop())
     fcs.reverse()
@@ -520,7 +520,7 @@ def faces_from_edge_table(edge_table,verts,props,face_props,edges,use_cols=0,use
         del holes[index]
         del face_props[i+extra_faces]
         continue
-    
+
     if len(fvs) > 4: #ngon
       ngons = BPyMesh_ngon(verts,fvs)
       face_prop = face_props.pop(i)
@@ -612,10 +612,10 @@ def read_shape(data,use_subsurf,use_hidden):
   #for i in range(len(b_edges)):
     #(v0,v1) = b_edges[i].vertices
     #print("edge ", i, " ",v0,"-",v1)
-    
+
   build_hard_edges(me,hard_edges)
   hide_fgon_edges(me,hide_edges)
-  
+
   if len(face_cols) > 0: build_face_colors(me,face_cols)
   if len(face_uvs) > 0: build_face_uvs(me,face_uvs)
   for i in range(len(faces)): me.faces[i].use_smooth = True
@@ -632,7 +632,7 @@ def read_shape(data,use_subsurf,use_hidden):
     mirror.use_clip = True
     mirror.use_mirror_merge = True
     #ob.parent = pivot
-    
+
   if b'state' in props:
     state = props[b'state']
     if state == b'locked' or state == b'hidden_locked':
@@ -650,10 +650,10 @@ def read_shape(data,use_subsurf,use_hidden):
           dummy = bpy.data.objects.new(folder,None)
           bpy.context.scene.objects.link(dummy)
         ob.parent = dummy
-  
+
 def read_edge_set(data):
   return read_array_as_dict(data,read_edge)
-  
+
 
 # build mesh in blender functions
 # ===============================
@@ -805,7 +805,7 @@ def build_cameras(views):
     cam.angle = radians(view[b'fov'])
     cam.clip_start = view[b'hither']
     cam.clip_end = view[b'yon']
-  
+
 def read_image(data):
   read_tuple_header(data)
   img_index = read_token(data)
@@ -818,7 +818,7 @@ def read_light(data):
   print ("light name::: ",light_name)
   out = read_array_as_dict(data,read_light_section)
   return (light_name,out)
-  
+
 def read_light_section(data):
   read_tuple_header(data)
   attrib_name = read_token(data)
@@ -930,7 +930,7 @@ def read_material(data):
 
 def add_textures(images,mappings,current_filepath):
   for (index,image) in images:
-    
+
     if b'filename' in image:
       texture = bpy.data.textures.get(image[b'name'])
       if texture == None:
@@ -945,7 +945,7 @@ def add_textures(images,mappings,current_filepath):
         if os.path.isfile(current_dir + filename):
           texture.image = load_image(current_dir,filename)
         else: continue
-  
+
       has_data = texture.image.has_data
       mapkeys = mappings.keys()
       for mapkey in mapkeys:
@@ -1005,6 +1005,9 @@ def load_wings_file(filepath):
   data = file.read(fsize-6)
   file.close()
   data = zlib.decompress(data)
+  file = open(filepath + ".dump","wb")
+  file.write(data)
+  file.close()
   return io.BytesIO(data)
 
 def read_wings_header(data):
@@ -1027,4 +1030,3 @@ def load(operator, context, filepath="",use_lamps=True,use_cameras=False,use_sub
     build_lamps(props[b'lights'])
   if b'images' in props: add_textures(props[b'images'],matmaps,filepath)
   return {'FINISHED'}
-  
